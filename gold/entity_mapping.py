@@ -73,7 +73,7 @@ STATUSCENTRALE_MAPPING = {
         "state_class": "measurement",
         "unit_of_measurement": "V",
         "icon": "mdi:current-dc",
-    }
+    },
     "corrente": {
         "entity_type": "sensor",
         "friendly_name": "Corrente",
