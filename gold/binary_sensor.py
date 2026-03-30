@@ -42,10 +42,14 @@ timer_uscita_g1_g2_g3 = None
 timer_uscita_gext = None
 
 
-def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass):
+def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, async_add_entities=None):
     """
     Setup COMPLETO dei binary sensors per Gold.
     Include sensori sistema, buscomm e sensori radio.
+    
+    Args:
+        async_add_entities: Callback opzionale per aggiungere entità dinamicamente.
+                           Usato per sensori radio che vengono creati in modo asincrono.
     """
     entities = []
     row_id = system["id"]
@@ -72,7 +76,15 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass):
                     _LOGGER.debug(f"[{row_id}] Socket Gold già connessa")
             
             # Prova a recuperare physical map se abbiamo user_code
-            user_code = config_entry.options.get("user_code") or config_entry.data.get("user_code")
+            # Il user_code è salvato nelle opzioni del sistema specifico
+            systems_config = config_entry.options.get("systems", {})
+            system_config = systems_config.get(str(row_id), {})
+            user_code = system_config.get("user_code", "")
+            
+            if not user_code:
+                # Fallback: prova nella data principale (vecchia configurazione)
+                user_code = config_entry.data.get("user_code", "")
+            
             if user_code and hasattr(api, 'fetch_and_cache_physical_map'):
                 id_centrale_str = str(centrale_id)
                 _LOGGER.info(f"[{row_id}] Recupero physical map con user_code...")
@@ -91,23 +103,28 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass):
                     
                     if radio_sensors:
                         _LOGGER.info(f"[{row_id}] Creati {len(radio_sensors)} sensori radio Gold")
-                        # Aggiungi le entità a Home Assistant
-                        # Nota: questo richiede che platform_setup sia chiamato di nuovo
-                        # In alternativa, possiamo usare async_add_entities se disponibile
-                        hass.bus.async_fire(
-                            "lince_gold_radio_sensors_ready",
-                            {
-                                "row_id": row_id,
-                                "sensor_count": len(radio_sensors)
-                            }
-                        )
+                        
+                        # Aggiungi le entità a Home Assistant tramite callback
+                        if async_add_entities:
+                            async_add_entities(radio_sensors)
+                            _LOGGER.info(
+                                f"[{row_id}] Aggiunti {len(radio_sensors)} sensori radio a Home Assistant"
+                            )
+                        else:
+                            _LOGGER.warning(
+                                f"[{row_id}] async_add_entities non disponibile, "
+                                f"sensori radio creati ma non aggiunti a HA"
+                            )
                 else:
                     _LOGGER.warning(f"[{row_id}] Physical map non disponibile, sensori radio non creati")
             else:
-                _LOGGER.debug(f"[{row_id}] User code non configurato, sensori radio non disponibili")
+                _LOGGER.warning(
+                    f"[{row_id}] User code non configurato nelle opzioni, sensori radio non disponibili. "
+                    "Configura il codice utente nelle opzioni dell'integrazione."
+                )
                 
         except Exception as e:
-            _LOGGER.error(f"[{row_id}] Errore avvio socket Gold: {e}")
+            _LOGGER.error(f"[{row_id}] Errore avvio socket Gold: {e}", exc_info=True)
     
     # Schedula l'avvio della socket in modo asincrono
     hass.async_create_task(start_socket_and_create_radio_sensors())
@@ -219,11 +236,18 @@ def update_gold_buscomm_binarysensors(api, row_id, keys, isStepRecursive=False):
     
     _LOGGER.debug(f"[{row_id}] Entità registrate: {list(api.buscomm_sensors[row_id].keys())}")
     
+    programs_changed = False  # Flag per tracciare se g1/g2/g3 sono cambiati
+    
     if keys is None:
         # Reset tutti i sensori
         for key, value in api.buscomm_sensors[row_id].items():
             if value is not None and hasattr(value, 'update_values'):
                 value.update_values(None)
+        # Resetta anche i programmi
+        programma_g1 = False
+        programma_g2 = False
+        programma_g3 = False
+        programs_changed = True
     else:
         # Aggiorna i sensori con i valori forniti
         for key, value in keys.items():
@@ -242,22 +266,39 @@ def update_gold_buscomm_binarysensors(api, row_id, keys, isStepRecursive=False):
                         _LOGGER.debug(f"[{row_id}] Update binary_sensor: {key} = {value}")
                         # Traccia stato programmi
                         if key == "g1":
+                            if programma_g1 != value:
+                                programs_changed = True
                             programma_g1 = value
                         elif key == "g2":
+                            if programma_g2 != value:
+                                programs_changed = True
                             programma_g2 = value
                         elif key == "g3":
+                            if programma_g3 != value:
+                                programs_changed = True
                             programma_g3 = value
                     else:
                         _LOGGER.debug(f"[{row_id}] Entità non trovata per {unique_id}")
         
-        # Aggiorna centrale allarmata
+        # Aggiorna centrale allarmata e pannello allarme
         if not isStepRecursive:
+            # Aggiorna sensore centrale allarmata
             unique_id = f"lincebuscomms_{row_id}_centrale_allarmata"
             entity = api.buscomm_sensors[row_id].get(unique_id)
             if entity and hasattr(entity, 'update_values'):
                 allarmata = programma_g1 or programma_g2 or programma_g3
                 entity.update_values(allarmata)
                 _LOGGER.debug(f"[{row_id}] Centrale allarmata: {allarmata}")
+            
+            # Aggiorna pannello allarme se i programmi sono cambiati
+            if programs_changed and hasattr(api, 'alarm_panels'):
+                panel = api.alarm_panels.get(row_id)
+                if panel and hasattr(panel, 'update_from_programs'):
+                    panel.update_from_programs(programma_g1, programma_g2, programma_g3)
+                    _LOGGER.debug(
+                        f"[{row_id}] Alarm panel aggiornato: G1={programma_g1}, "
+                        f"G2={programma_g2}, G3={programma_g3}"
+                    )
 
 
 class GoldBinarySensor(CommonCentraleBinarySensorEntity):

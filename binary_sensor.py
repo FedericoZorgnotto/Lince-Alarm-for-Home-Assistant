@@ -41,7 +41,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 coordinator=coordinator,
                 api=api,
                 config_entry=config_entry,
-                hass=hass
+                hass=hass,
+                async_add_entities=async_add_entities  # Per sensori creati dinamicamente
             )
             entities.extend(brand_entities)
 

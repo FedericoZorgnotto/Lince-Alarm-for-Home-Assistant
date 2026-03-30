@@ -129,17 +129,21 @@ class ComponentFactory:
             return EuroplusAlarmPanel(name, unique_id, row_id, coordinator, api, config_entry)
 
     @staticmethod
-    def get_binary_sensors_for_system(brand: str, system: dict, coordinator, api, config_entry, hass):
+    def get_binary_sensors_for_system(brand: str, system: dict, coordinator, api, config_entry, hass, async_add_entities=None):
         """
         Ritorna TUTTE le entità binary sensor per un sistema specifico.
         DELEGA completamente al modulo del brand.
+        
+        Args:
+            async_add_entities: Callback per aggiungere entità dinamicamente (opzionale).
+                               Usato per sensori che vengono creati in modo asincrono.
         """
         if brand == "lince-europlus":
             from .europlus.binary_sensor import setup_europlus_binary_sensors
             return setup_europlus_binary_sensors(system, coordinator, api, config_entry, hass)
         elif brand == "lince-gold":
             from .gold.binary_sensor import setup_gold_binary_sensors
-            return setup_gold_binary_sensors(system, coordinator, api, config_entry, hass)
+            return setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, async_add_entities)
         else:
             # Default: usa Europlus
             from .europlus.binary_sensor import setup_europlus_binary_sensors

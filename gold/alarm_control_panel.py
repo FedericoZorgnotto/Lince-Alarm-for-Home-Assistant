@@ -47,6 +47,12 @@ def setup_gold_alarm_panels(system, coordinator, api, config_entry, hass):
     )
     entities.append(panel)
     
+    # Registra il pannello nell'API per aggiornamenti da binary_sensor
+    if not hasattr(api, 'alarm_panels'):
+        api.alarm_panels = {}
+    api.alarm_panels[row_id] = panel
+    _LOGGER.debug(f"[Gold {row_id}] Alarm panel registrato nell'API")
+    
     return entities
 
 
@@ -162,41 +168,198 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
         # Nessuna corrispondenza esatta
         return AlarmControlPanelState.ARMED_CUSTOM_BYPASS
 
+    # ---------- Parsing stato Gold ----------
+    def _get_gold_state(self) -> Optional[dict]:
+        """
+        Recupera lo stato Gold dalla cache dell'API.
+        Equivalente a _get_system().get("socket_message") di Europlus.
+        """
+        if hasattr(self._api, '_states_cache'):
+            return self._api._states_cache.get(self._row_id)
+        return None
+    
+    def _parse_gold_status(self, state: Optional[dict]) -> tuple:
+        """
+        Parser specifico Gold.
+        
+        Ritorna: (mask, progs_any, alarm_triggered)
+        
+        - mask: bitmask dei programmi attivi (G1=1, G2=2, G3=4)
+        - progs_any: True se almeno un programma attivo
+        - alarm_triggered: True se allarme in corso
+        
+        NOTA: Gold non ha timer uscita/ingresso visibili nel protocollo attuale,
+        quindi ARMING e PENDING non sono gestiti come in Europlus.
+        """
+        if not state:
+            return 0, False, False
+        
+        try:
+            prog = state.get("prog", {})
+            if isinstance(prog, dict):
+                g1 = bool(prog.get("g1", False))
+                g2 = bool(prog.get("g2", False))
+                g3 = bool(prog.get("g3", False))
+            else:
+                # Se prog è ancora un int (non parsato)
+                g1 = bool(prog & 1)
+                g2 = bool(prog & 2)
+                g3 = bool(prog & 4)
+            
+            # Calcola mask
+            mask = 0
+            if g1:
+                mask |= PROGRAM_BITS.get("G1", 1)
+            if g2:
+                mask |= PROGRAM_BITS.get("G2", 2)
+            if g3:
+                mask |= PROGRAM_BITS.get("G3", 4)
+            
+            progs_any = g1 or g2 or g3
+            
+            # Allarme in corso
+            stato = state.get("stato", {})
+            if isinstance(stato, dict):
+                alarm_triggered = bool(stato.get("allarme_inserito", False))
+            else:
+                alarm_triggered = bool(stato & 64)  # bit 6 = allarme_inserito
+            
+            return mask, progs_any, alarm_triggered
+            
+        except Exception as e:
+            _LOGGER.debug("[Gold %s] _parse_gold_status error: %s", self._row_id, e)
+            return 0, False, False
+
     # ---------- Stato ----------
     @property
     def alarm_state(self) -> AlarmControlPanelState | None:
         """
-        Determina lo stato dell'allarme.
+        Determina lo stato dell'allarme Gold.
         
-        Per Gold, lo stato viene determinato dalla socket (onGoldState).
-        Se non disponibile, usa il pending state locale.
+        Segue lo stesso pattern di Europlus:
+        1) TRIGGERED se allarme in corso
+        2) DISARMED se nessun programma attivo
+        3) ARMED_* se almeno un programma attivo (mappa ai profili)
+        4) Fallback al pending state locale
         
-        TODO: Implementare parsing stato da socket Gold quando disponibile
+        NOTA: Gold non ha timer uscita/ingresso nel protocollo attuale,
+        quindi ARMING e PENDING non sono supportati.
         """
-        # Per ora, usa il pending state se presente
+        # Leggi stato dalla cache API
+        gold_state = self._get_gold_state()
+        mask, progs_any, alarm_triggered = self._parse_gold_status(gold_state)
+        
+        # 1) TRIGGERED ha massima priorità
+        if alarm_triggered:
+            return AlarmControlPanelState.TRIGGERED
+        
+        # 2) Priorità al pending DISARMING
+        if self._pending_state == AlarmControlPanelState.DISARMING:
+            return (
+                AlarmControlPanelState.DISARMED
+                if not progs_any
+                else AlarmControlPanelState.DISARMING
+            )
+        
+        # 3) DISARMED: nessun programma attivo
+        if not progs_any:
+            return AlarmControlPanelState.DISARMED
+        
+        # 4) Priorità al pending ARMING
+        if self._pending_state == AlarmControlPanelState.ARMING:
+            # Se WS ha già completato l'inserimento, mostra ARMED_*
+            if progs_any:
+                mapped = self._mask_to_ha_state_by_profiles(mask)
+                if mapped:
+                    # Pending confermato, cancella
+                    self._clear_pending()
+                    return mapped
+            return AlarmControlPanelState.ARMING
+        
+        # 5) ARMED_*: almeno un programma attivo
+        if progs_any:
+            mapped = self._mask_to_ha_state_by_profiles(mask)
+            return mapped or AlarmControlPanelState.ARMED_CUSTOM_BYPASS
+        
+        # 6) Fallback al pending locale
         if self._pending_state is not None:
             return self._pending_state
         
-        # TODO: Leggere stato reale dalla socket Gold
-        # system = self._get_system()
-        # socket_msg = system.get("socket_message") if system else None
-        # ...parse stato...
+        return None
+
+    def update_from_programs(self, g1: bool, g2: bool, g3: bool):
+        """
+        Callback per notifica che i programmi sono cambiati.
+        Chiamato da update_gold_buscomm_binarysensors quando cambia g1/g2/g3.
         
-        # Fallback: DISARMED
-        return AlarmControlPanelState.DISARMED
+        NOTA: Con il refactoring, alarm_state ora legge direttamente dalla cache API,
+        quindi questo metodo serve principalmente per triggare l'aggiornamento UI.
+        """
+        # Log del cambio
+        _LOGGER.debug(
+            f"[Gold {self._row_id}] Programs update notification: G1={g1}, G2={g2}, G3={g3}"
+        )
+        
+        # Calcola mask per gestione pending
+        mask = 0
+        if g1:
+            mask |= PROGRAM_BITS.get("G1", 1)
+        if g2:
+            mask |= PROGRAM_BITS.get("G2", 2)
+        if g3:
+            mask |= PROGRAM_BITS.get("G3", 4)
+        
+        # Se c'era un pending state, verifica se confermato
+        if self._pending_state is not None:
+            if self._pending_expected_mask == mask:
+                _LOGGER.info(f"[Gold {self._row_id}] Pending confermato: mask={mask}")
+                self._clear_pending()
+            else:
+                _LOGGER.debug(
+                    f"[Gold {self._row_id}] Pending non corrisponde: "
+                    f"expected={self._pending_expected_mask}, actual={mask}"
+                )
+        
+        # Forza aggiornamento stato UI
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self):
         attrs = {}
+        
+        # Stato corrente dai dati Gold
+        gold_state = self._get_gold_state()
+        if gold_state:
+            prog = gold_state.get("prog", {})
+            if isinstance(prog, dict):
+                attrs["g1"] = prog.get("g1", False)
+                attrs["g2"] = prog.get("g2", False)
+                attrs["g3"] = prog.get("g3", False)
+            else:
+                attrs["g1"] = bool(prog & 1)
+                attrs["g2"] = bool(prog & 2)
+                attrs["g3"] = bool(prog & 4)
+            
+            stato = gold_state.get("stato", {})
+            if isinstance(stato, dict):
+                attrs["allarme_inserito"] = stato.get("allarme_inserito", False)
+                attrs["servizio"] = stato.get("servizio", False)
+        
+        # Profili configurati
         pm = self._build_profile_masks()
         attrs["profile_masks"] = pm
         attrs["panel_brand"] = "lince-gold"
+        
+        # Pending state
         if self._pending_state is not None:
             attrs["pending_state"] = self._pending_state.name
             attrs["pending_expected_mask"] = self._pending_expected_mask
             attrs["pending_profile"] = self._pending_profile
+        
+        # Errori
         if getattr(self, "_last_error", None):
             attrs["last_error"] = self._last_error
+        
         return attrs
 
     # ---------- Gestione errori ----------

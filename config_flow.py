@@ -542,12 +542,14 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
             defaults[profile] = [p for p in defaults[profile] if p in PROGRAMS]
 
         # Schema base con limiti brand-specific
-        schema_fields = {
-            vol.Required("num_filari", default=defaults["num_filari"]): 
-                vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_FILARI_BRAND)),
-            vol.Required("num_radio", default=defaults["num_radio"]): 
-                vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_RADIO_BRAND)),
-        }
+        schema_fields = {}
+        
+        # num_filari e num_radio solo per EuroPlus/EuroNET (Gold usa physical_map)
+        if brand != "lince-gold":
+            schema_fields[vol.Required("num_filari", default=defaults["num_filari"])] = \
+                vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_FILARI_BRAND))
+            schema_fields[vol.Required("num_radio", default=defaults["num_radio"])] = \
+                vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_RADIO_BRAND))
         
         # Aggiungi campo codice utente solo per centrali Gold
         if brand == "lince-gold":
@@ -591,16 +593,20 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
 
         # Se l'utente ha inviato il form, valida e salva
         if user_input is not None:
-            # Parse sicuro dei numerici
-            try:
-                nfil = int(user_input.get("num_filari", DEFAULT_FILARI_BRAND))
-                nrad = int(user_input.get("num_radio", DEFAULT_RADIO_BRAND))
-            except Exception:
-                nfil, nrad = DEFAULT_FILARI_BRAND, DEFAULT_RADIO_BRAND
+            # Parse sicuro dei numerici (solo per non-Gold)
+            if brand != "lince-gold":
+                try:
+                    nfil = int(user_input.get("num_filari", DEFAULT_FILARI_BRAND))
+                    nrad = int(user_input.get("num_radio", DEFAULT_RADIO_BRAND))
+                except Exception:
+                    nfil, nrad = DEFAULT_FILARI_BRAND, DEFAULT_RADIO_BRAND
 
-            # Clamp ai massimi brand-specific
-            nfil = min(max(0, nfil), MAX_FILARI_BRAND)
-            nrad = min(max(0, nrad), MAX_RADIO_BRAND)
+                # Clamp ai massimi brand-specific
+                nfil = min(max(0, nfil), MAX_FILARI_BRAND)
+                nrad = min(max(0, nrad), MAX_RADIO_BRAND)
+            else:
+                # Gold non usa num_filari/num_radio - vengono dalla physical_map
+                nfil, nrad = 0, 0
 
             # Multi-select -> liste
             selected = {
@@ -645,13 +651,15 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
 
                 # Mantieni valori con suggested
                 suggested = {
-                    "num_filari": nfil,
-                    "num_radio": nrad,
                     "home": selected["home"],
                     "away": selected["away"],
                     "night": selected["night"],
                     "vacation": selected["vacation"],
                 }
+                # Aggiungi num_filari/num_radio solo per non-Gold
+                if brand != "lince-gold":
+                    suggested["num_filari"] = nfil
+                    suggested["num_radio"] = nrad
                 # Aggiungi user_code se Gold
                 if brand == "lince-gold":
                     suggested[CONF_USER_CODE] = user_input.get(CONF_USER_CODE, "")
@@ -672,10 +680,13 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
 
             # Nessun duplicato -> salva configurazione
             system_cfg = {
-                "num_filari": nfil, 
-                "num_radio": nrad,
-                "brand": brand  # Salva anche il brand nella config
+                "brand": brand  # Salva sempre il brand nella config
             }
+            
+            # num_filari e num_radio solo per non-Gold
+            if brand != "lince-gold":
+                system_cfg["num_filari"] = nfil
+                system_cfg["num_radio"] = nrad
             
             # Gestisci codice utente Gold per ottenere nomi zone
             if brand == "lince-gold":
