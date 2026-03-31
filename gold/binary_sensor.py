@@ -103,12 +103,27 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
                 if user_code:
                     _LOGGER.info(f"[{row_id}] user_code trovato in config_entry.data (login iniziale)")
             
+            # LOG IMPORTANTE: stato user_code
+            if user_code:
+                _LOGGER.info(f"[{row_id}] ✓ user_code presente (lunghezza: {len(user_code)})")
+            else:
+                _LOGGER.warning(f"[{row_id}] ✗ user_code NON trovato - nessun sensore radio sarà creato")
+            
+            # LOG: stato async_add_entities
+            _LOGGER.info(f"[{row_id}] async_add_entities callback: {'✓ disponibile' if async_add_entities else '✗ NON disponibile'}")
+            
             if user_code and hasattr(api, 'fetch_and_cache_physical_map'):
                 id_centrale_str = str(centrale_id)
-                _LOGGER.info(f"[{row_id}] Recupero physical map con user_code...")
+                _LOGGER.info(f"[{row_id}] Chiamata fetch_and_cache_physical_map per centrale {id_centrale_str}...")
                 physical_map = await api.fetch_and_cache_physical_map(id_centrale_str, user_code)
                 
                 if physical_map:
+                    # LOG: contenuto physical_map
+                    radio_count = len(physical_map.get("radio", []))
+                    bus_count = len(physical_map.get("bus", []))
+                    filari_count = len(physical_map.get("filari", []))
+                    _LOGGER.info(f"[{row_id}] ✓ Physical map ricevuta: {radio_count} radio, {bus_count} bus, {filari_count} filari")
+                    
                     # Crea sensori radio
                     radio_sensors = setup_gold_radio_sensors(
                         coordinator=coordinator,
@@ -120,26 +135,31 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
                     )
                     
                     if radio_sensors:
-                        _LOGGER.info(f"[{row_id}] Creati {len(radio_sensors)} sensori radio Gold")
+                        _LOGGER.info(f"[{row_id}] ✓ Creati {len(radio_sensors)} sensori radio Gold")
                         
                         # Aggiungi le entità a Home Assistant tramite callback
                         if async_add_entities:
                             async_add_entities(radio_sensors)
                             _LOGGER.info(
-                                f"[{row_id}] Aggiunti {len(radio_sensors)} sensori radio a Home Assistant"
+                                f"[{row_id}] ✓ SUCCESSO: {len(radio_sensors)} sensori radio aggiunti a Home Assistant"
                             )
                         else:
-                            _LOGGER.warning(
-                                f"[{row_id}] async_add_entities non disponibile, "
-                                f"sensori radio creati ma non aggiunti a HA"
+                            _LOGGER.error(
+                                f"[{row_id}] ✗ ERRORE CRITICO: async_add_entities non disponibile! "
+                                f"I {len(radio_sensors)} sensori radio sono stati creati ma NON aggiunti a HA"
                             )
+                    else:
+                        _LOGGER.warning(f"[{row_id}] Nessun sensore radio creato dalla physical_map (nessun tipo supportato?)")
                 else:
-                    _LOGGER.warning(f"[{row_id}] Physical map non disponibile, sensori radio non creati")
+                    _LOGGER.error(f"[{row_id}] ✗ Physical map NON ricevuta (fetch_and_cache_physical_map ha ritornato None)")
             else:
-                _LOGGER.warning(
-                    f"[{row_id}] User code non configurato nelle opzioni, sensori radio non disponibili. "
-                    "Configura il codice utente nelle opzioni dell'integrazione."
-                )
+                if not user_code:
+                    _LOGGER.warning(
+                        f"[{row_id}] User code non configurato. "
+                        "Per vedere i sensori radio, configura il codice utente nelle opzioni."
+                    )
+                else:
+                    _LOGGER.error(f"[{row_id}] API non ha metodo fetch_and_cache_physical_map!")
                 
         except Exception as e:
             _LOGGER.error(f"[{row_id}] Errore avvio socket Gold: {e}", exc_info=True)
