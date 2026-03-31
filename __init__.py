@@ -259,26 +259,42 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, config_entry: ConfigEntr
         _LOGGER.warning("Primo refresh fallito: %s. Continuo con setup, retry automatico attivo", e)
 
     # =========================================================================
-    # CARICAMENTO ZONE GOLD (se codice utente fornito)
+    # CARICAMENTO ZONE GOLD (se codice utente fornito in data o options)
     # =========================================================================
-    # Se c'è un codice Gold e ci sono centrali Gold, carichiamo le physical_map
-    # in modo che i sensori radio/filari siano creati automaticamente
-    if gold_user_code and "lince-gold" in brands_count:
-        _LOGGER.info("Codice Gold fornito, caricamento zone per centrali Gold...")
-        
+    # Il codice Gold può essere stato inserito:
+    # 1. Durante il login iniziale (config_entry.data["user_code"])
+    # 2. Nelle opzioni per ogni centrale (config_entry.options["systems_config"][sid]["user_code"])
+    
+    if "lince-gold" in brands_count:
         # Identifica centrali Gold
         gold_systems = [s for s in systems if s.get("_detected_brand") == "lince-gold"]
+        systems_config = config_entry.options.get("systems_config", {})
         
         for system in gold_systems:
             try:
-                id_centrale = str(system.get("id_centrale", system.get("id", "")))
-                if id_centrale and hasattr(api, 'gold_login_with_code'):
-                    _LOGGER.debug(f"Caricamento zone per centrale Gold {id_centrale}")
-                    login_data = await api.gold_login_with_code(id_centrale, gold_user_code)
-                    if login_data:
-                        _LOGGER.info(f"Zone caricate per centrale Gold {id_centrale}")
-                    else:
-                        _LOGGER.warning(f"Login Gold fallito per centrale {id_centrale} - zone non caricate")
+                system_id = system.get("id")
+                id_centrale = str(system.get("id_centrale", system_id))
+                
+                # Cerca il codice: prima nelle opzioni, poi nella data
+                system_cfg = systems_config.get(str(system_id), {})
+                user_code = system_cfg.get("user_code", "")
+                
+                if not user_code:
+                    # Fallback al codice globale inserito nel login iniziale
+                    user_code = gold_user_code
+                
+                if user_code:
+                    _LOGGER.info(f"Caricamento zone per centrale Gold {id_centrale} (system_id: {system_id})")
+                    
+                    if hasattr(api, 'gold_login_with_code'):
+                        login_data = await api.gold_login_with_code(id_centrale, user_code)
+                        if login_data:
+                            _LOGGER.info(f"Zone caricate per centrale Gold {id_centrale}")
+                        else:
+                            _LOGGER.warning(f"Login Gold fallito per centrale {id_centrale}")
+                else:
+                    _LOGGER.debug(f"Nessun codice utente configurato per centrale Gold {id_centrale}")
+                    
             except Exception as e:
                 _LOGGER.warning(f"Errore caricamento zone Gold per {system.get('name', 'N/A')}: {e}")
 

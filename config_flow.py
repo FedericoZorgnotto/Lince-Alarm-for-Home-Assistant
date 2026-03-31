@@ -784,18 +784,23 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
             _LOGGER.debug(f"Salvando config per centrale {sid} (brand: {brand}): "
                          f"filari={nfil}, radio={nrad}")
             _LOGGER.debug(f"Profili ARM per {sid}: {selected}")
+            
+            # DEBUG: Log cosa viene salvato
+            _LOGGER.info(f"[Gold Config] Salvando systems_config con chiave '{sid_str}':")
+            _LOGGER.info(f"[Gold Config]   - user_code presente: {bool(system_cfg.get('user_code'))}")
+            _LOGGER.info(f"[Gold Config]   - zone_names presente: {bool(system_cfg.get('zone_names'))}")
+            _LOGGER.info(f"[Gold Config]   - systems_config completo: {systems_config}")
 
             new_options = dict(self._entry.options)
             new_options["systems_config"] = systems_config
             new_options["arm_profiles"] = arm_profiles
             
-            # Se il codice utente Gold è cambiato, forza reload dell'integrazione
-            # per ricaricare le entità con le nuove zone
+            # NOTA: OptionsFlowWithReload ricarica automaticamente l'integrazione
+            # dopo async_create_entry, quindi non serve un reload manuale.
+            # Ma aggiungiamo un log per debug:
             if user_code_changed:
-                _LOGGER.info(f"Codice utente Gold modificato per centrale {sid} - reload integrazione")
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self._entry.entry_id)
-                )
+                _LOGGER.info(f"Codice utente Gold modificato per centrale {sid} - "
+                            f"OptionsFlowWithReload ricaricherà l'integrazione")
             
             return self.async_create_entry(title="", data=new_options)
 

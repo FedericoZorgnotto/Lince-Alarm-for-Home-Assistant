@@ -55,6 +55,14 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
     row_id = system["id"]
     centrale_id = system.get("id_centrale", row_id)
     centrale_name = system.get("name", "Sconosciuta")
+    
+    # DEBUG: Log per capire gli ID
+    _LOGGER.info(f"[Gold] setup_gold_binary_sensors chiamato:")
+    _LOGGER.info(f"  - system['id'] (row_id): {row_id} (type: {type(row_id).__name__})")
+    _LOGGER.info(f"  - system['id_centrale']: {centrale_id}")
+    _LOGGER.info(f"  - config_entry.options keys: {list(config_entry.options.keys())}")
+    systems_config_debug = config_entry.options.get("systems_config", {})
+    _LOGGER.info(f"  - systems_config keys: {list(systems_config_debug.keys())}")
 
     # Inizializza dizionari per Gold
     if not hasattr(api, 'buscomm_sensors'):
@@ -78,12 +86,22 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
             # Prova a recuperare physical map se abbiamo user_code
             # Il user_code è salvato nelle opzioni del sistema specifico (systems_config)
             systems_config = config_entry.options.get("systems_config", {})
+            
+            # DEBUG: Log per verificare la struttura
+            _LOGGER.debug(f"[{row_id}] config_entry.options keys: {list(config_entry.options.keys())}")
+            _LOGGER.debug(f"[{row_id}] systems_config keys: {list(systems_config.keys())}")
+            _LOGGER.debug(f"[{row_id}] Looking for key: '{str(row_id)}'")
+            
             system_config = systems_config.get(str(row_id), {})
+            _LOGGER.debug(f"[{row_id}] system_config: {system_config}")
+            
             user_code = system_config.get("user_code", "")
             
             if not user_code:
                 # Fallback: prova nella data principale (per codice inserito in fase di login)
                 user_code = config_entry.data.get("user_code", "")
+                if user_code:
+                    _LOGGER.info(f"[{row_id}] user_code trovato in config_entry.data (login iniziale)")
             
             if user_code and hasattr(api, 'fetch_and_cache_physical_map'):
                 id_centrale_str = str(centrale_id)

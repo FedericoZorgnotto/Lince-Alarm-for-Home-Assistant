@@ -15,7 +15,9 @@
 - Corretta la propagazione del callback `async_add_entities`
 - Corretto il recupero di `user_code` dalla configurazione
 - **Fix critico**: corretto il percorso di lettura del codice utente (`systems_config` invece di `systems`)
-- **Fix reload**: l'integrazione ora si ricarica automaticamente quando il codice utente viene modificato
+- **Fix reload**: `OptionsFlowWithReload` gestisce automaticamente il reload
+- **Fix init**: il codice utente Gold viene ora cercato sia in `data` (login) che in `options` (config successiva)
+- Aggiunto logging dettagliato per debug
 
 ### Miglioramenti
 
