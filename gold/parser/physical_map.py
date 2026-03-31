@@ -579,16 +579,27 @@ class GoldPhysicalMapParser:
         
         try:
             if not config_hex or len(config_hex) < 20:
+                _LOGGER.debug(f"parse_radio_config: hex troppo corto ({len(config_hex) if config_hex else 0} chars)")
                 return result
             
             # Converti hex string in array di byte
-            arr = hexstring_to_array_int(config_hex, True)
+            # NOTA: NON usare reverse - i byte devono rimanere nell'ordine originale
+            # Il formato è: byte0, byte1, ..., byte8=tipo, byte9=spec
+            arr = hexstring_to_array_int(config_hex, False)
+            
+            # LOG: Mostra i primi 14 byte per debug
+            if len(arr) >= 14:
+                _LOGGER.debug(f"parse_radio_config: arr[0:14] = {[hex(x) for x in arr[0:14]]}")
+            else:
+                _LOGGER.debug(f"parse_radio_config: arr = {[hex(x) for x in arr]} (solo {len(arr)} byte)")
             
             if len(arr) < 10:
                 return result
             
             num_tipo = arr[8] if len(arr) > 8 else 0
             num_spec = arr[9] if len(arr) > 9 else 0
+            
+            _LOGGER.debug(f"parse_radio_config: tipo={num_tipo}, spec={num_spec}")
             
             if num_tipo == 0 or num_tipo > 8:
                 return result
