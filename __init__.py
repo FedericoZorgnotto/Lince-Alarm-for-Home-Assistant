@@ -196,6 +196,7 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, config_entry: ConfigEntr
     
     email = config_entry.data.get("email")
     password = config_entry.data.get("password")
+    gold_user_code = config_entry.data.get("user_code", "")  # Codice Gold opzionale
     
     if not email or not password:
         _LOGGER.error("Credenziali cloud mancanti")
@@ -256,6 +257,30 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, config_entry: ConfigEntr
         await coordinator.async_config_entry_first_refresh()
     except Exception as e:
         _LOGGER.warning("Primo refresh fallito: %s. Continuo con setup, retry automatico attivo", e)
+
+    # =========================================================================
+    # CARICAMENTO ZONE GOLD (se codice utente fornito)
+    # =========================================================================
+    # Se c'è un codice Gold e ci sono centrali Gold, carichiamo le physical_map
+    # in modo che i sensori radio/filari siano creati automaticamente
+    if gold_user_code and "lince-gold" in brands_count:
+        _LOGGER.info("Codice Gold fornito, caricamento zone per centrali Gold...")
+        
+        # Identifica centrali Gold
+        gold_systems = [s for s in systems if s.get("_detected_brand") == "lince-gold"]
+        
+        for system in gold_systems:
+            try:
+                id_centrale = str(system.get("id_centrale", system.get("id", "")))
+                if id_centrale and hasattr(api, 'gold_login_with_code'):
+                    _LOGGER.debug(f"Caricamento zone per centrale Gold {id_centrale}")
+                    login_data = await api.gold_login_with_code(id_centrale, gold_user_code)
+                    if login_data:
+                        _LOGGER.info(f"Zone caricate per centrale Gold {id_centrale}")
+                    else:
+                        _LOGGER.warning(f"Login Gold fallito per centrale {id_centrale} - zone non caricate")
+            except Exception as e:
+                _LOGGER.warning(f"Errore caricamento zone Gold per {system.get('name', 'N/A')}: {e}")
 
     hass.data[DOMAIN]["api"] = api
     hass.data[DOMAIN]["coordinator"] = coordinator

@@ -18,7 +18,11 @@
         "description": "Inserisci le credenziali del tuo account Lince GoldCloud.",
         "data": {
           "email": "Email",
-          "password": "Password"
+          "password": "Password",
+          "user_code": "Codice Utente Gold (opzionale)"
+        },
+        "data_description": {
+          "user_code": "Solo per centrali Gold: inserisci un codice utente per caricare i sensori radio e filari. Senza questo codice vedrai solo lo stato della centrale e potrai inserire/disinserire l'allarme. Puoi aggiungerlo anche dopo dalla configurazione."
         }
       },
       "local_login": {
@@ -67,7 +71,8 @@
       "duplicate_profile": "Questa modalità ha programmi duplicati con un'altra."
     },
     "abort": {
-      "reauth_successful": "Riautenticazione completata con successo."
+      "reauth_successful": "Riautenticazione completata con successo.",
+      "already_configured": "Questa configurazione esiste già. Usa 'Configura' per modificarla."
     }
   },
   "options": {

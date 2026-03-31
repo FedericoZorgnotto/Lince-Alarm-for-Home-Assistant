@@ -76,13 +76,13 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
                     _LOGGER.debug(f"[{row_id}] Socket Gold già connessa")
             
             # Prova a recuperare physical map se abbiamo user_code
-            # Il user_code è salvato nelle opzioni del sistema specifico
-            systems_config = config_entry.options.get("systems", {})
+            # Il user_code è salvato nelle opzioni del sistema specifico (systems_config)
+            systems_config = config_entry.options.get("systems_config", {})
             system_config = systems_config.get(str(row_id), {})
             user_code = system_config.get("user_code", "")
             
             if not user_code:
-                # Fallback: prova nella data principale (vecchia configurazione)
+                # Fallback: prova nella data principale (per codice inserito in fase di login)
                 user_code = config_entry.data.get("user_code", "")
             
             if user_code and hasattr(api, 'fetch_and_cache_physical_map'):

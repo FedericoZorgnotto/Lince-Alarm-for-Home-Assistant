@@ -236,14 +236,16 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
         """
         Determina lo stato dell'allarme Gold.
         
-        Segue lo stesso pattern di Europlus:
+        Ordine priorità:
         1) TRIGGERED se allarme in corso
-        2) DISARMED se nessun programma attivo
-        3) ARMED_* se almeno un programma attivo (mappa ai profili)
-        4) Fallback al pending state locale
+        2) Pending DISARMING (UI reattiva durante disinserimento)
+        3) Pending ARMING (UI reattiva durante inserimento) - PRIMA di DISARMED!
+        4) DISARMED se nessun programma attivo
+        5) ARMED_* se almeno un programma attivo
+        6) Fallback al pending locale
         
-        NOTA: Gold non ha timer uscita/ingresso nel protocollo attuale,
-        quindi ARMING e PENDING non sono supportati.
+        NOTA: Gold non ha timer uscita/ingresso nel protocollo,
+        quindi ARMING viene mostrato tramite pending state.
         """
         # Leggi stato dalla cache API
         gold_state = self._get_gold_state()
@@ -261,20 +263,22 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
                 else AlarmControlPanelState.DISARMING
             )
         
-        # 3) DISARMED: nessun programma attivo
-        if not progs_any:
-            return AlarmControlPanelState.DISARMED
-        
-        # 4) Priorità al pending ARMING
+        # 3) Priorità al pending ARMING - PRIMA di DISARMED!
+        #    Così mostriamo ARMING anche se WS non ha ancora aggiornato
         if self._pending_state == AlarmControlPanelState.ARMING:
-            # Se WS ha già completato l'inserimento, mostra ARMED_*
+            # Se WS ha già confermato l'inserimento, mostra ARMED_*
             if progs_any:
                 mapped = self._mask_to_ha_state_by_profiles(mask)
                 if mapped:
-                    # Pending confermato, cancella
+                    # Pending confermato dal WS, pulisci
                     self._clear_pending()
                     return mapped
+            # WS non ha ancora confermato, mostra ARMING
             return AlarmControlPanelState.ARMING
+        
+        # 4) DISARMED: nessun programma attivo
+        if not progs_any:
+            return AlarmControlPanelState.DISARMED
         
         # 5) ARMED_*: almeno un programma attivo
         if progs_any:
@@ -292,8 +296,7 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
         Callback per notifica che i programmi sono cambiati.
         Chiamato da update_gold_buscomm_binarysensors quando cambia g1/g2/g3.
         
-        NOTA: Con il refactoring, alarm_state ora legge direttamente dalla cache API,
-        quindi questo metodo serve principalmente per triggare l'aggiornamento UI.
+        Quando il WS conferma un pending state, invio le notifiche appropriate.
         """
         # Log del cambio
         _LOGGER.debug(
@@ -312,8 +315,27 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
         # Se c'era un pending state, verifica se confermato
         if self._pending_state is not None:
             if self._pending_expected_mask == mask:
-                _LOGGER.info(f"[Gold {self._row_id}] Pending confermato: mask={mask}")
+                _LOGGER.info(f"[Gold {self._row_id}] Pending confermato dal WS: mask={mask}")
+                
+                # Invia notifica in base al tipo di pending
+                pending_profile = self._pending_profile
+                pending_state = self._pending_state
+                
+                # Pulisci pending
                 self._clear_pending()
+                
+                # Invia notifica appropriata (async via create_task)
+                if pending_state == AlarmControlPanelState.ARMING and mask > 0:
+                    asyncio.create_task(self._send_armed_notification(pending_profile))
+                elif pending_state == AlarmControlPanelState.DISARMING and mask == 0:
+                    asyncio.create_task(self._send_disarmed_notification())
+                    # Pulisci notifica TRIGGERED se presente
+                    asyncio.create_task(
+                        dismiss_persistent_notification(
+                            self.hass,
+                            f"alarm_triggered_{self._row_id}"
+                        )
+                    )
             else:
                 _LOGGER.debug(
                     f"[Gold {self._row_id}] Pending non corrisponde: "
@@ -530,14 +552,12 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
             )
             
             if success:
-                _LOGGER.info("[Gold %s] Attivazione profilo '%s' (mask=%d) completata", 
+                _LOGGER.info("[Gold %s] Attivazione profilo '%s' (mask=%d) inviata, attesa conferma WS", 
                            self._row_id, profile, mask)
-                # Aggiorna pending a stato finale
-                self._pending_state = self._mask_to_ha_state_by_profiles(mask)
+                # NOTA: Lasciamo _pending_state = ARMING
+                # Lo stato ARMED_* verrà mostrato quando il WS aggiorna g1/g2/g3
+                # e alarm_state() rileva progs_any = True
                 self.async_write_ha_state()
-                
-                # Notifica
-                await self._send_armed_notification(profile)
             else:
                 self._clear_pending(write_state=True)
                 self._set_error("Attivazione Gold fallita. Controlla il codice o riprova.")
@@ -575,9 +595,10 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
             )
             
             if success:
-                _LOGGER.info("[Gold %s] Disattivazione completata", self._row_id)
-                # Aggiorna pending a DISARMED
-                self._pending_state = AlarmControlPanelState.DISARMED
+                _LOGGER.info("[Gold %s] Disattivazione inviata, attesa conferma WS", self._row_id)
+                # NOTA: Lasciamo _pending_state = DISARMING
+                # Lo stato DISARMED verrà mostrato quando il WS aggiorna g1/g2/g3=False
+                # e alarm_state() rileva progs_any = False
                 self.async_write_ha_state()
                 
                 # Pulisci notifica TRIGGERED se presente

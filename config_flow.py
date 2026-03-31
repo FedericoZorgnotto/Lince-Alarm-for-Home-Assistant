@@ -72,19 +72,42 @@ class LinceGoldCloudConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         
         if user_input is not None:
+            email = user_input["email"].strip().lower()
+            
+            # Controlla se esiste già una configurazione con questa email
+            # 1. Controlla via unique_id (per nuove configurazioni)
+            await self.async_set_unique_id(f"cloud_{email}")
+            self._abort_if_unique_id_configured()
+            
+            # 2. Controlla manualmente le entry esistenti (per vecchie configurazioni senza unique_id)
+            for entry in self._async_current_entries():
+                if not entry.data.get(CONF_LOCAL_MODE):  # È una config cloud
+                    existing_email = entry.data.get("email", "").strip().lower()
+                    if existing_email == email:
+                        return self.async_abort(reason="already_configured")
+            
             api = CommonAPI(self.hass)
             try:
                 await api.login(user_input["email"], user_input["password"])
                 if not api.token:
                     errors["base"] = "auth_failed"
                 else:
+                    # Salva anche il codice Gold se inserito (opzionale)
+                    gold_user_code = user_input.get(CONF_USER_CODE, "").strip()
+                    
+                    entry_data = {
+                        CONF_LOCAL_MODE: False,
+                        "email": user_input["email"], 
+                        "password": user_input["password"],
+                    }
+                    
+                    # Aggiungi codice Gold solo se inserito
+                    if gold_user_code:
+                        entry_data[CONF_USER_CODE] = gold_user_code
+                    
                     return self.async_create_entry(
                         title=f"Lince Cloud ({user_input['email']})",
-                        data={
-                            CONF_LOCAL_MODE: False,
-                            "email": user_input["email"], 
-                            "password": user_input["password"],
-                        },
+                        data=entry_data,
                     )
             except Exception as e:
                 _LOGGER.error(f"Login cloud fallito: {e}")
@@ -96,6 +119,10 @@ class LinceGoldCloudConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             vol.Required("password"): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD, autocomplete="password")
+            ),
+            # Codice opzionale per centrali Gold - serve per caricare le zone
+            vol.Optional(CONF_USER_CODE): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
         })
         return self.async_show_form(step_id="cloud_login", data_schema=schema, errors=errors)
@@ -114,6 +141,18 @@ class LinceGoldCloudConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not host:
                 errors[CONF_HOST] = "invalid_host"
             else:
+                # Controlla se esiste già una configurazione con questo host:port
+                # 1. Controlla via unique_id (per nuove configurazioni)
+                await self.async_set_unique_id(f"local_{host}:{port}")
+                self._abort_if_unique_id_configured()
+                
+                # 2. Controlla manualmente le entry esistenti (per vecchie configurazioni senza unique_id)
+                for entry in self._async_current_entries():
+                    if entry.data.get(CONF_LOCAL_MODE) and entry.data.get(CONF_HOST) == host:
+                        entry_port = entry.data.get(CONF_PORT, DEFAULT_LOCAL_PORT)
+                        if entry_port == port:
+                            return self.async_abort(reason="already_configured")
+                
                 # Testa la connessione (username è sempre "admin")
                 try:
                     from .euronet import EuroNetClient
@@ -688,36 +727,52 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
                 system_cfg["num_filari"] = nfil
                 system_cfg["num_radio"] = nrad
             
+            # Flag per tracciare se serve reload
+            user_code_changed = False
+            
             # Gestisci codice utente Gold per ottenere nomi zone
             if brand == "lince-gold":
                 user_code = user_input.get(CONF_USER_CODE, "").strip()
+                
+                # Controlla se il codice è cambiato rispetto al precedente
+                old_system_cfg = self._entry.options.get("systems_config", {}).get(sid_str, {})
+                old_user_code = old_system_cfg.get(CONF_USER_CODE, "")
+                
+                if user_code != old_user_code:
+                    user_code_changed = True
+                    _LOGGER.info(f"Codice utente Gold cambiato per centrale {sid}")
+                
                 if user_code:
                     system_cfg[CONF_USER_CODE] = user_code
                     
-                    # Prova a ottenere i nomi delle zone dall'API
-                    try:
-                        # Ottieni id_centrale dal sistema
-                        id_centrale = system.get("id_centrale") if system else None
-                        if id_centrale:
-                            from .gold.api import GoldAPI
-                            email = self._entry.data.get("email")
-                            password = self._entry.data.get("password")
-                            gold_api = GoldAPI(self.hass, email, password)
-                            await gold_api.login()
-                            
-                            login_data = await gold_api.gold_login_with_code(id_centrale, user_code)
-                            if login_data:
-                                zone_names = gold_api.parse_zone_names_from_login(login_data)
-                                system_cfg["zone_names"] = zone_names
-                                _LOGGER.info(f"Nomi zone Gold caricati per centrale {sid}: "
-                                           f"filari={len(zone_names.get('filari', {}))}, "
-                                           f"radio={len(zone_names.get('radio', {}))}")
+                    # Prova a ottenere i nomi delle zone dall'API solo se codice cambiato
+                    if user_code_changed:
+                        try:
+                            # Ottieni id_centrale dal sistema
+                            id_centrale = system.get("id_centrale") if system else None
+                            if id_centrale:
+                                from .gold.api import GoldAPI
+                                email = self._entry.data.get("email")
+                                password = self._entry.data.get("password")
+                                gold_api = GoldAPI(self.hass, email, password)
+                                await gold_api.login()
+                                
+                                login_data = await gold_api.gold_login_with_code(id_centrale, user_code)
+                                if login_data:
+                                    zone_names = gold_api.parse_zone_names_from_login(login_data)
+                                    system_cfg["zone_names"] = zone_names
+                                    _LOGGER.info(f"Nomi zone Gold caricati per centrale {sid}: "
+                                               f"filari={len(zone_names.get('filari', {}))}, "
+                                               f"radio={len(zone_names.get('radio', {}))}")
+                                else:
+                                    _LOGGER.warning(f"Login Gold con codice fallita per centrale {sid}")
                             else:
-                                _LOGGER.warning(f"Login Gold con codice fallita per centrale {sid}")
-                        else:
-                            _LOGGER.warning(f"id_centrale non trovato per sistema Gold {sid}")
-                    except Exception as e:
-                        _LOGGER.error(f"Errore durante caricamento nomi zone Gold: {e}")
+                                _LOGGER.warning(f"id_centrale non trovato per sistema Gold {sid}")
+                        except Exception as e:
+                            _LOGGER.error(f"Errore durante caricamento nomi zone Gold: {e}")
+                    else:
+                        # Mantieni i nomi zone esistenti se codice non cambiato
+                        system_cfg["zone_names"] = old_system_cfg.get("zone_names", {})
                 else:
                     # Rimuovi nomi zone se codice rimosso
                     system_cfg.pop(CONF_USER_CODE, None)
@@ -733,6 +788,14 @@ class LinceGoldCloudOptionsFlow(OptionsFlowWithReload):
             new_options = dict(self._entry.options)
             new_options["systems_config"] = systems_config
             new_options["arm_profiles"] = arm_profiles
+            
+            # Se il codice utente Gold è cambiato, forza reload dell'integrazione
+            # per ricaricare le entità con le nuove zone
+            if user_code_changed:
+                _LOGGER.info(f"Codice utente Gold modificato per centrale {sid} - reload integrazione")
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._entry.entry_id)
+                )
             
             return self.async_create_entry(title="", data=new_options)
 
