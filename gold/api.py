@@ -531,17 +531,44 @@ class GoldAPI(CommonAPI):
         """
         self._physical_maps_cache[centrale_id] = physical_map
         
+        # LOG: Mostra chiavi disponibili per debug
+        _LOGGER.debug(f"[set_physical_map] centrale_id={centrale_id}, socket_clients keys={list(self._socket_clients.keys())}")
+        
         # Imposta anche nel socket client per il parsing in tempo reale
+        # Prova sia con centrale_id che con le chiavi esistenti
         client = self._socket_clients.get(centrale_id)
+        
+        # Se non trovato, prova conversione stringa/int
+        if not client:
+            client = self._socket_clients.get(str(centrale_id))
+        if not client:
+            try:
+                client = self._socket_clients.get(int(centrale_id))
+            except (ValueError, TypeError):
+                pass
+        
+        # Se ancora non trovato, cerca tra tutte le chiavi una che contenga centrale_id
+        if not client:
+            for key in self._socket_clients.keys():
+                if str(centrale_id) in str(key) or str(key) in str(centrale_id):
+                    client = self._socket_clients.get(key)
+                    _LOGGER.info(f"[set_physical_map] Trovato socket con chiave {key} per centrale {centrale_id}")
+                    break
+        
         if client:
             client.set_physical_map(physical_map)
-        
-        _LOGGER.info(
-            f"[{centrale_id}] Physical map set: "
-            f"{len(physical_map.get('radio', []))} radio, "
-            f"{len(physical_map.get('bus', []))} bus, "
-            f"{len(physical_map.get('filari', []))} filari"
-        )
+            _LOGGER.info(
+                f"[{centrale_id}] Physical map set nel socket: "
+                f"{len(physical_map.get('radio', []))} radio, "
+                f"{len(physical_map.get('bus', []))} bus, "
+                f"{len(physical_map.get('filari', []))} filari"
+            )
+        else:
+            _LOGGER.warning(
+                f"[{centrale_id}] Socket client NON trovato! "
+                f"Physical map salvata solo in cache. "
+                f"Socket disponibili: {list(self._socket_clients.keys())}"
+            )
     
     async def fetch_and_cache_physical_map(self, id_centrale: str, user_code: str) -> Optional[Dict]:
         """

@@ -184,6 +184,11 @@ def parse_radio_stat(num: int, num_tipo_periferica: int, num_spec_periferica: in
     """
     stat = RadioDeviceStat()
     
+    # LOG per debug: mostra il valore raw e i bit
+    _LOGGER.debug(
+        f"parse_radio_stat: num=0x{num:04X} ({num}), tipo={num_tipo_periferica}, spec={num_spec_periferica}"
+    )
+    
     # Parse batteria_scarica (comune a tutti)
     # Logica: bit 8 (0x0100) = scarica, bit 3 (0x08) = ok, entrambi 0 = sconosciuto
     if num & 0x0100:
@@ -222,17 +227,17 @@ def parse_radio_stat(num: int, num_tipo_periferica: int, num_spec_periferica: in
             stat.supervisione_led = bool(num & 0x04)
             stat.escluso_led = bool(num & 0x10)
             stat.memoria_reed = bool(num & 0x20)
+            stat.memoria_aux = False  # Sempre false nel JS originale
             stat.dormiente = bool(num & 0x0800)
             stat.memoria_tamper = bool(num & 0x8000)
-            stat.memoria_aux = False
         elif num_spec_periferica == SPEC_CONTATTO_TAPPARELLA:
             # Tapparella/Tenda
             stat.allarme_aux = bool(num & 0x01)
             stat.supervisione_led = bool(num & 0x04)
             stat.escluso_led = bool(num & 0x10)
-            stat.guasto = False
-            stat.dormiente = bool(num & 0x0800)
             stat.memoria_aux = bool(num & 0x20)
+            stat.guasto = False  # Sempre false nel JS originale
+            stat.dormiente = bool(num & 0x0800)
             
     elif num_tipo_periferica == RADIO_TYPE_SIRENA:
         # case 4: sirena

@@ -124,6 +124,15 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
                     filari_count = len(physical_map.get("filari", []))
                     _LOGGER.info(f"[{row_id}] ✓ Physical map ricevuta: {radio_count} radio, {bus_count} bus, {filari_count} filari")
                     
+                    # IMPORTANTE: Passa la physical_map direttamente al socket client
+                    # Questo garantisce che sia disponibile per il parsing degli stats
+                    socket_client = api.get_socket_client(row_id)
+                    if socket_client:
+                        socket_client.set_physical_map(physical_map)
+                        _LOGGER.info(f"[{row_id}] ✓ Physical map passata direttamente al socket client")
+                    else:
+                        _LOGGER.warning(f"[{row_id}] Socket client non ancora disponibile per physical_map")
+                    
                     # Crea sensori radio
                     radio_sensors = setup_gold_radio_sensors(
                         coordinator=coordinator,
@@ -136,6 +145,17 @@ def setup_gold_binary_sensors(system, coordinator, api, config_entry, hass, asyn
                     
                     if radio_sensors:
                         _LOGGER.info(f"[{row_id}] ✓ Creati {len(radio_sensors)} sensori radio Gold")
+                        
+                        # Registra il callback per gli aggiornamenti dei sensori radio
+                        # Riprova a ottenere il socket client (potrebbe essere stato creato nel frattempo)
+                        if not socket_client:
+                            socket_client = api.get_socket_client(row_id)
+                        
+                        if socket_client:
+                            socket_client.set_dev_stats_callback(update_gold_radio_sensors)
+                            _LOGGER.info(f"[{row_id}] ✓ Callback update_gold_radio_sensors registrato sul socket")
+                        else:
+                            _LOGGER.warning(f"[{row_id}] Socket client non disponibile per registrare callback")
                         
                         # Aggiungi le entità a Home Assistant tramite callback
                         if async_add_entities:
@@ -751,20 +771,36 @@ async def update_gold_radio_sensors(row_id: int, dev_type: str, group: int, pars
     Callback per aggiornare i sensori radio da WebSocket.
     Chiamato da GoldSocketClient.on_gold_dev_stats.
     """
+    _LOGGER.info(
+        f"[{row_id}] update_gold_radio_sensors chiamato: "
+        f"dev_type={dev_type}, group={group}, stats_count={len(parsed_stats)}"
+    )
+    
     if dev_type != "radio":
+        _LOGGER.debug(f"[{row_id}] Ignorato dev_type={dev_type} (non radio)")
         return
     
     sensors = _gold_radio_sensors.get(row_id, {})
     if not sensors:
-        _LOGGER.debug(f"[{row_id}] No radio sensors registered yet")
+        _LOGGER.warning(f"[{row_id}] Nessun sensore radio registrato in _gold_radio_sensors!")
+        _LOGGER.debug(f"[{row_id}] row_id disponibili: {list(_gold_radio_sensors.keys())}")
         return
+    
+    _LOGGER.debug(f"[{row_id}] Sensori registrati: {list(sensors.keys())}")
     
     for device_idx, parsed_data in parsed_stats.items():
         sensor = sensors.get(device_idx)
         if sensor:
+            _LOGGER.info(
+                f"[{row_id}] Aggiorno sensore radio {device_idx}: "
+                f"triggered={parsed_data.get('is_triggered')}, raw={parsed_data.get('raw')}"
+            )
             sensor.update_from_websocket(parsed_data)
         else:
-            _LOGGER.debug(f"[{row_id}] No sensor for radio index {device_idx}")
+            _LOGGER.debug(
+                f"[{row_id}] No sensor for radio index {device_idx} "
+                f"(registrati: {list(sensors.keys())})"
+            )
 
 
 def setup_gold_radio_sensors(
@@ -842,4 +878,8 @@ def setup_gold_radio_sensors(
             )
     
     _LOGGER.info(f"[{row_id}] Created {len(entities)} Gold radio sensors")
+    _LOGGER.info(
+        f"[{row_id}] _gold_radio_sensors[{row_id}] registrati: "
+        f"{list(_gold_radio_sensors.get(row_id, {}).keys())}"
+    )
     return entities

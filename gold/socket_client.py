@@ -199,10 +199,14 @@ class GoldSocketClient(BaseSocketClient):
             pm_key = dev_type if dev_type != "filari" else "filari"
             pm_devices = self._physical_map.get(pm_key, [])
             
+            # Log physical map status
+            if not pm_devices:
+                _LOGGER.warning(
+                    f"[{self.centrale_id}] Physical map vuota per {pm_key}! "
+                    f"Stats ricevuti ma non possono essere parsati."
+                )
+            
             for i, stat_value in enumerate(stats):
-                if stat_value == 0:
-                    continue  # Skip dispositivi non attivi
-                
                 global_idx = (group * 16) + i
                 
                 if dev_type == "radio" and global_idx < len(pm_devices):
@@ -211,6 +215,8 @@ class GoldSocketClient(BaseSocketClient):
                     num_spec = device_config.get("num_spec_periferica", 0)
                     device_name = device_config.get("nome", f"Radio {global_idx}")
                     
+                    # Solo dispositivi configurati (num_tipo > 0)
+                    # NOTA: stat_value=0 è valido (sensore in stato normale/chiuso)
                     if num_tipo > 0:
                         parsed = parse_radio_stat(stat_value, num_tipo, num_spec)
                         parsed_stats[global_idx] = {
@@ -222,11 +228,18 @@ class GoldSocketClient(BaseSocketClient):
                             "is_triggered": parsed.is_triggered(),
                             "stat": parsed.to_dict()
                         }
-                        _LOGGER.info(
-                            f"[{self.centrale_id}] Radio {global_idx} ({device_name}): "
-                            f"raw={stat_value}, triggered={parsed.is_triggered()}, "
-                            f"type={get_device_type_name(num_tipo, num_spec)}"
-                        )
+                        # Log solo se triggered o batteria scarica
+                        if parsed.is_triggered() or parsed.batteria_scarica:
+                            _LOGGER.info(
+                                f"[{self.centrale_id}] Radio {global_idx} ({device_name}): "
+                                f"raw=0x{stat_value:04X}, triggered={parsed.is_triggered()}, "
+                                f"bat_low={parsed.batteria_scarica}"
+                            )
+                        else:
+                            _LOGGER.debug(
+                                f"[{self.centrale_id}] Radio {global_idx} ({device_name}): "
+                                f"raw=0x{stat_value:04X}, OK"
+                            )
                 
                 elif dev_type == "bus" and global_idx < len(pm_devices):
                     device_config = pm_devices[global_idx]
@@ -243,8 +256,8 @@ class GoldSocketClient(BaseSocketClient):
                         }
                         _LOGGER.debug(f"[{self.centrale_id}] Bus {global_idx}: {parsed.to_dict()}")
                 
-                elif dev_type == "filari":
-                    device_name = pm_devices[global_idx].get("nome", f"Filare {global_idx}") if global_idx < len(pm_devices) else f"Filare {global_idx}"
+                elif dev_type == "filari" and global_idx < len(pm_devices):
+                    device_name = pm_devices[global_idx].get("nome", f"Filare {global_idx}")
                     parsed = parse_filare_stat(stat_value)
                     parsed_stats[global_idx] = {
                         "nome": device_name,

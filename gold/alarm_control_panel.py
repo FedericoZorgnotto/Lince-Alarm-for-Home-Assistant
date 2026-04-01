@@ -114,7 +114,8 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     @property
     def device_info(self):
-        return DeviceInfo(identifiers={(f"{DOMAIN}", self._row_id)})
+        # NOTA: Usa str(row_id) per consistenza con sensori radio che usano via_device
+        return DeviceInfo(identifiers={(DOMAIN, str(self._row_id))})
 
     @property
     def code_arm_required(self) -> bool:
@@ -217,12 +218,30 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
             
             progs_any = g1 or g2 or g3
             
-            # Allarme in corso
+            # ATTENZIONE: "allarme_inserito" significa "sistema armato" (armed), NON "allarme scattato"!
+            # Per TRIGGERED dobbiamo controllare gli allarmi REALI:
+            # - allarme_a, allarme_k, allarme_tecnologico in 'alim'
+            # - memoria_allarme_ingressi in 'stato'
+            alarm_triggered = False
+            
+            alim = state.get("alim", {})
+            if isinstance(alim, dict):
+                # Allarmi attivi in alim
+                alarm_triggered = (
+                    bool(alim.get("allarme_a", False)) or
+                    bool(alim.get("allarme_k", False)) or
+                    bool(alim.get("allarme_tecnologico", False))
+                )
+            
             stato = state.get("stato", {})
             if isinstance(stato, dict):
-                alarm_triggered = bool(stato.get("allarme_inserito", False))
-            else:
-                alarm_triggered = bool(stato & 64)  # bit 6 = allarme_inserito
+                # Anche memoria allarme indica triggered recente
+                alarm_triggered = alarm_triggered or bool(stato.get("memoria_allarme_ingressi", False))
+            
+            _LOGGER.debug(
+                f"[Gold {self._row_id}] _parse_gold_status: mask={mask}, progs_any={progs_any}, "
+                f"triggered={alarm_triggered}, g1={g1}, g2={g2}, g3={g3}"
+            )
             
             return mask, progs_any, alarm_triggered
             
