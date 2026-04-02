@@ -173,7 +173,7 @@ class GoldBUSCommsSensor(CoordinatorEntity, SensorEntity):
             name="Comunicazioni Bus",
             model=f"{centrale_name} - {self._centrale_id}",
             configuration_url=MANUFACTURER_URL,
-            via_device=(DOMAIN, self._row_id),
+            via_device=(DOMAIN, str(self._row_id)),
         )
 
     @property

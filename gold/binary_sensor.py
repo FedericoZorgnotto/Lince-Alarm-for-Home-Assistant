@@ -427,7 +427,7 @@ class GoldBuscommBinarySensor(CoordinatorEntity, BinarySensorEntity):
             name="Comunicazioni Bus",
             model=f"{centrale_name} - {self._centrale_id}",
             configuration_url=MANUFACTURER_URL,
-            via_device=(DOMAIN, self._row_id),
+            via_device=(DOMAIN, str(self._row_id)),
         )
 
     @property
@@ -613,6 +613,16 @@ class GoldRadioBinarySensor(CoordinatorEntity, BinarySensorEntity):
         if self._num_tipo == RADIO_TYPE_SIRENA:
             # Sirena: mostra se ha problemi
             return self._parsed_stat.get("has_problem", False)
+        elif self._num_tipo == RADIO_TYPE_CONTATTO and self._num_spec == 0:
+            # Magnetico: alcuni impianti espongono l'apertura sul bit0 anche senza allarme_reed.
+            return bool(
+                self._parsed_stat.get("allarme_reed", False)
+                or self._parsed_stat.get("allarme_aux", False)
+                or (self._raw_stat & 0x01)
+            )
+        elif self._num_tipo == RADIO_TYPE_CONTATTO and self._num_spec == 1:
+            # Tapparella: usa il flag dedicato aux.
+            return self._parsed_stat.get("allarme_aux", False)
         elif self._num_tipo == RADIO_TYPE_USCITA:
             # Uscita: mostra se attiva
             return self._parsed_stat.get("stato_uscita", False)

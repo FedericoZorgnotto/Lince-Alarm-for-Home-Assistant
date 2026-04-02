@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from ..const import DOMAIN
+from ..const import MANUFACTURER
 from ..utils import send_multiple_notifications, dismiss_persistent_notification
 from .const import PROGRAM_BITS
 
@@ -114,8 +115,12 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     @property
     def device_info(self):
-        # NOTA: Usa str(row_id) per consistenza con sensori radio che usano via_device
-        return DeviceInfo(identifiers={(DOMAIN, str(self._row_id))})
+        return DeviceInfo(
+            identifiers={(DOMAIN, str(self._row_id))},
+            name=self._centrale_name,
+            manufacturer=MANUFACTURER,
+            model="Lince Gold",
+        )
 
     @property
     def code_arm_required(self) -> bool:
@@ -344,17 +349,8 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
                 self._clear_pending()
                 
                 # Invia notifica appropriata (async via create_task)
-                if pending_state == AlarmControlPanelState.ARMING and mask > 0:
-                    asyncio.create_task(self._send_armed_notification(pending_profile))
-                elif pending_state == AlarmControlPanelState.DISARMING and mask == 0:
-                    asyncio.create_task(self._send_disarmed_notification())
-                    # Pulisci notifica TRIGGERED se presente
-                    asyncio.create_task(
-                        dismiss_persistent_notification(
-                            self.hass,
-                            f"alarm_triggered_{self._row_id}"
-                        )
-                    )
+                # Le notifiche vengono inviate nei metodi command (arm/disarm)
+                # per evitare duplicati quando arriva la conferma WS.
             else:
                 _LOGGER.debug(
                     f"[Gold {self._row_id}] Pending non corrisponde: "
@@ -573,6 +569,7 @@ class GoldAlarmControlPanel(CoordinatorEntity, AlarmControlPanelEntity):
             if success:
                 _LOGGER.info("[Gold %s] Attivazione profilo '%s' (mask=%d) inviata, attesa conferma WS", 
                            self._row_id, profile, mask)
+                await self._send_armed_notification(profile)
                 # NOTA: Lasciamo _pending_state = ARMING
                 # Lo stato ARMED_* verrà mostrato quando il WS aggiorna g1/g2/g3
                 # e alarm_state() rileva progs_any = True
