@@ -12,6 +12,7 @@ import time
 import logging
 import threading
 import requests
+import random
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
@@ -704,9 +705,9 @@ class EuroNetClient:
         
         # Attesa più lunga per permettere alla centrale di elaborare il login
         time.sleep(1.5)
-        
         # Costruisci query string
-        params = []
+        dummy = f"dummy={str(random.randint(100, 999))}"
+        params = [dummy]
         for prog in programmi:
             prog_upper = prog.upper()
             if prog_upper in ["G1", "G2", "G3", "GEXT"]:

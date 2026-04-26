@@ -826,45 +826,45 @@ class EuroNetCoordinator(DataUpdateCoordinator):
         if not code:
             _LOGGER.error("Codice utente non fornito")
             return False
-            
-        try:
-            result = await self.hass.async_add_executor_job(
-                self.client.arm, code, programs
-            )
-            if result:
-                await self.async_request_refresh()
-                
-                # Invia notifica di armamento (rispetta lo switch notifiche)
-                mode_names = {
-                    "away": "Fuori casa",
-                    "home": "In casa", 
-                    "night": "Notte",
-                    "vacation": "Vacanza"
-                }
-                mode_name = mode_names.get(arm_mode, arm_mode.capitalize())
-                
-                await send_multiple_notifications(
-                    self.hass,
-                    message=f"Centrale armata in modalità **{mode_name}**",
-                    title="🔒 Allarme Attivato",
-                    persistent=True,
-                    persistent_id=f"lince_alarm_armed_{self.client.host}",
-                    mobile=True,
-                    centrale_id=self.client.host,  # Usa host per controllare le notifiche
-                    data={
-                        "tag": "lince_alarm_status",
-                        "importance": "high",
-                        "channel": "alarm",
-                        "actions": [
-                            {"action": "URI", "title": "Apri Home Assistant", "uri": "/lovelace"}
-                        ]
-                    }
+        async with self._polling_lock:
+            try:
+                result = await self.hass.async_add_executor_job(
+                    self.client.arm, code, programs
                 )
-            return result
-        except Exception as e:
-            _LOGGER.error(f"Errore arm: {e}")
-            return False
-    
+                if result:
+                    await self.async_request_refresh()
+                    
+                    # Invia notifica di armamento (rispetta lo switch notifiche)
+                    mode_names = {
+                        "away": "Fuori casa",
+                        "home": "In casa", 
+                        "night": "Notte",
+                        "vacation": "Vacanza"
+                    }
+                    mode_name = mode_names.get(arm_mode, arm_mode.capitalize())
+                    
+                    await send_multiple_notifications(
+                        self.hass,
+                        message=f"Centrale armata in modalità **{mode_name}**",
+                        title="🔒 Allarme Attivato",
+                        persistent=True,
+                        persistent_id=f"lince_alarm_armed_{self.client.host}",
+                        mobile=True,
+                        centrale_id=self.client.host,  # Usa host per controllare le notifiche
+                        data={
+                            "tag": "lince_alarm_status",
+                            "importance": "high",
+                            "channel": "alarm",
+                            "actions": [
+                                {"action": "URI", "title": "Apri Home Assistant", "uri": "/lovelace"}
+                            ]
+                        }
+                    )
+                return result
+            except Exception as e:
+                _LOGGER.error(f"Errore arm: {e}")
+                return False
+        
     async def async_disarm(self, code: str) -> bool:
         """Disarma tutti i programmi.
         
